@@ -1,0 +1,135 @@
+<!--
+  WEBRTC Challenge
+  --- faire une app WEBRTC
+  -> stream la camera de mon tel
+  -> sur une page web, vers on pc
+-->
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC</title>
+<style type="text/css">
+
+html, body {
+  background: #222;
+  color: #fff;
+}
+
+body {
+  max-width: 600px;
+  margin: 75px auto;
+}
+
+textarea {
+  width: 100%;
+  height: 260px;
+}
+
+div#button-wrapper {
+  padding-top: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+</style>
+</head>
+<body>
+  <video id="video" playsinline autoplay muted></video>
+  <textarea id="text"></textarea>
+  <div id="button-wrapper">
+    <button id="getBtn">get offer</button>
+    <button id="answerBtn">use answer</button>
+    <button id="offerBtn">use offer</button>
+  <div>
+<script type="text/javascript">
+// get user media
+// 
+
+const elem = {
+  answerBtn: document.getElementById('answerBtn'),
+  offerBtn: document.getElementById('offerBtn'),
+  getBtn: document.getElementById('getBtn'),
+  video: document.getElementById('video'),
+  text: document.getElementById('text'),
+}
+
+elem.text.addEventListener('paste', () =>
+  setTimeout(() => localStorage.offer = elem.text.value, 300))
+
+const pc = new RTCPeerConnection()
+
+window.pc = pc
+
+const createOffer = async () => {
+
+  // The caller captures local Media via navigator.mediaDevices.getUserMedia()
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+
+  elem.video.srcObject = stream
+
+  // The caller creates RTCPeerConnection and called pc.addTrack() (Since addStream is deprecating)
+  pc.addTrack(stream.getVideoTracks()[0], stream)
+
+  // The caller calls pc.createOffer() to create an offer.
+  const offer = await pc.createOffer()
+
+  // The caller calls pc.setLocalDescription() to set that offer as the local description (that is, the description of the local end of the connection).
+  pc.setLocalDescription(offer)
+
+  elem.text.value = offer.sdp
+}
+
+const createAnswer = async () => {
+  const offer = { type: 'offer', sdp: elem.text.value }
+
+  // The recipient receives the offer and calls pc.setRemoteDescription() to record it as the remote description (the description of the other end of the connection).
+  pc.setRemoteDescription(offer)
+
+  // The recipient does any setup it needs to do for its end of the call:
+    // capture its local media, and attach each media tracks into the peer connection via pc.addTrack()
+
+  // The recipient then creates an answer by calling pc.createAnswer().
+  const answer = await pc.createAnswer()
+
+  // The recipient calls pc.setLocalDescription(createdAnswer) to set the answer as its local description. The recipient now knows the configuration of both ends of the connection.
+  pc.setLocalDescription(answer)
+
+  const receivers = pc.getReceivers()
+
+  const stream = new MediaStream(receivers.map(r => r.track))
+
+  console.log(stream)
+
+  elem.video.srcObject = stream
+  console.log('c bn c dns src frer')
+  elem.text.value = answer.sdp
+}
+
+const finalize = async () => {
+  // The caller receives the answer.
+  const answer = { type: 'answer', sdp: elem.text.value }
+
+  // The caller calls pc.setRemoteDescription() to set the answer as the remote description for its end of the call.
+  pc.setRemoteDescription(answer)
+
+  const senders = pc.getSenders()
+  const receivers = pc.getReceivers()
+  // It now knows the configuration of both peers.
+  console.log({ senders, receivers })
+
+  // Media begins to flow as configured.
+}
+
+// A: media -> offer // createOffer
+// B: offer -> answer // createAnswer
+// A: answer -> the end // finalize
+
+elem.answerBtn.addEventListener('click', () => finalize().catch(console.error))
+elem.offerBtn.addEventListener('click', () => createAnswer().catch(console.error))
+elem.getBtn.addEventListener('click', () => createOffer().catch(console.error))
+
+</script>
+</body>
+</html>
