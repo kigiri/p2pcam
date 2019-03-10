@@ -99,7 +99,6 @@ body {
   background-color: #08f;
 }
 
-
 .heal {
   color: #9f3;
 }
@@ -108,55 +107,95 @@ body {
   color: red;
 }
 
+.player.me {
+  border: 2px solid hotpink;
+}
+
+.player.dead {
+  opacity: 0.3;
+}
+
 </style>
 </head>
 <body>
 <div id="board">
-  <div id="ally-side" class="side">
-    <div id="ally-1" class="player"></div>
-    <div id="ally-2" class="player"></div>
+  <div class="side">
+    <div class="player dead"></div>
+    <div class="player dead"></div>
   </div>
-  <div id="enemy-side" class="side">
-    <div id="enemy-1" class="player"></div>
-    <div id="enemy-2" class="player"></div>
+  <div class="side">
+    <div class="player dead"></div>
+    <div class="player dead"></div>
   </div>
 </div>
 
 <script type="module">
+// Class ideas:
+// successfull kick = heal back
+//
+
+const GCD = 1000
+
 const START_CAST = 0
 const STOP_CAST = 1
 const KICK = 2
+
+const CAST_TARGET = 0
+const CASTED_AT = 1
+const KICK_TARGET = 2
+const KICKED_AT = 3
+const HP = 4
+const ACTION_SIZE = 5
 
 const ws = new WebSocket(`ws://${document.location.host}/ws`)
 
 ws.binaryType = 'arraybuffer'
 
 let gameStarted = false
-const updateGameState = e => {
-  if (!gameStarted) {
-    gameStarted = true
-    console.log('game started !!')
+let position
+ws.addEventListener('message', e => {
+  if (position === undefined) {
+    position = new Uint8Array(e.data)[0]
+    const myPlayer = players[position]
+    myPlayer.elem.classList.add('me')
+    return
   }
-  const state = new Float64Array(e.data)
 
+  const state = new Float64Array(e.data)
   let i = -1
   while (++i < 4) {
-    const start = i * 3
-    players[i].target = players[state[start]]
-    players[i].targetedAt = state[start + 1]
-    players[i].kickUsedAt = state[start + 2]
+    const start = i * ACTION_SIZE
+    const player = players[i]
+    const castTarget = state[start + CAST_TARGET]
+
+    if (castTarget < 0) {
+      player.castEndedAt = -castTarget
+      player.castTarget = undefined
+    } else {
+      player.castTarget = players[castTarget]
+    }
+
+    player.kickTarget = state[start + KICK_TARGET]
+    player.kickedAt = state[start + KICKED_AT]
+    player.castedAt = state[start + CASTED_AT]
+    player.hp = state[start + HP]
   }
-}
 
-let position
-const getInitialPosition = e => {
-  position = new Uint8Array(e.data)[0]
-  console.log({ position })
-  ws.addEventListener('message', updateGameState)
-  ws.removeEventListener('message', getInitialPosition)
-}
+  if (!gameStarted) {
+    const activePlayers = players.filter(p => p.castEndedAt)
 
-ws.addEventListener('message', getInitialPosition)
+    gameStarted = activePlayers.length === 4
+    if (gameStarted) {
+      console.log('game started !!')
+    }
+  }
+})
+
+
+ws.addEventListener('close', () => {
+  console.log('socket close !')
+  document.body.textContent = 'THE END'
+})
 
 const sendAction = (...args) => 
   gameStarted && ws.send(new Uint8Array(args))
@@ -174,7 +213,9 @@ const makeBar = ({ name, hueStart, hueEnd }) => {
 
   const getValue = () => value
   const setValue = newValue => {
-    value = Math.min(Math.max(newValue, 0), 1)
+    newValue = Math.min(Math.max(newValue, 0), 1)
+    if (newValue === value) return
+    value = newValue
     const h = hueDiff * value + hueStart
     stateElem.style.transform = `translate(-${((1-value)*100).toFixed(3)}%)`
     stateElem.style.backgroundColor = `hsl(${h}, 100%, 60%)`
@@ -186,71 +227,78 @@ const makeBar = ({ name, hueStart, hueEnd }) => {
 }
 
 
-const maxDamage = 20000
+const calcValue = diff => diff * (diff / 10000)
 const players = [...document.getElementsByClassName('player')]
   .map((elem, index) => {
+    const ui = document.createElement('div')
     const kick = document.createElement('div')
     const bars = document.createElement('div')
-    const ui = document.createElement('div')
     const prevision = document.createElement('div')
     const energyBar = makeBar({ name: 'energy', hueStart: 220, hueEnd: 300 })
     const healthBar = makeBar({ name: 'health', hueStart: 0, hueEnd: 90 })
     const player = {
+      isDead: true,
+      hp: 100000,
       team: index > 1 ? 'enemy' : 'ally',
       kickUsedAt: 0,
-      targetedAt: 0,
+      castedAt: 0,
       target: undefined,
-      showPrevision: value => {
-        if (!value) {
+      refresh: previsionValue => {
+        if (player.hp <= 0) {
+          player.isDead = true
+          elem.classList.add('dead')
+          elem.removeEventListener('mouseup', handleMouseUp)
+          elem.removeEventListener('mousedown', handleMouseDown)
+        } else if (player.isDead) {
+          player.isDead = false
+          elem.classList.remove('dead')
+          elem.addEventListener('mouseup', handleMouseUp)
+          elem.addEventListener('mousedown', handleMouseDown)
+        }
+        healthBar.setValue(player.hp / 10000)
+        if (!previsionValue) {
           prevision.textContent = ''
           return
         }
-        prevision.textContent = String(Math.floor(value / 100))
-        prevision.className = (value > 0) ? 'heal' : 'damage'
+        prevision.textContent = String(Math.floor(previsionValue))
+        prevision.className = previsionValue > 0 ? 'heal' : 'damage'
       },
       index,
       elem,
     }
 
-    player.showPrevision(1000)
-
+    ui.className = 'ui'
     kick.className = 'kick'
     bars.className = 'bars'
-    ui.className = 'ui'
 
-    bars.appendChild(energyBar.elem)
-    bars.appendChild(healthBar.elem)
     ui.appendChild(kick)
     ui.appendChild(bars)
+    bars.appendChild(energyBar.elem)
+    bars.appendChild(healthBar.elem)
     elem.appendChild(ui)
     elem.appendChild(prevision)
 
-    elem.addEventListener('mousedown', () => {
-      // players[position].target = player
-      // players[position].targetedAt = now
-
+    const handleMouseDown = () => {
       sendAction(START_CAST, index)
-    })
+    }
 
-    elem.addEventListener('mouseup', () => {
-      // const prevision = getPrevision(players[position])
-      // const changes = prevision / maxDamage
-      // const current = healthBar.getValue()
-      // healthBar.setValue(current + changes)
-      // players[position].target = undefined
-
+    const handleMouseUp = () => {
       sendAction(STOP_CAST)
-    })
+    }
+
+    elem.addEventListener('mouseup', handleMouseUp)
+    elem.addEventListener('mousedown', handleMouseDown)
 
     return player
   })
 
+window.players = players
 
 const getPrevision = player => {
-  const { target } = player
-  if (!target) return 0
-  const diff = now - player.targetedAt
-  return player.team === target.team ? diff : -diff
+  const { castTarget } = player
+  if (!castTarget) return 0
+  const diff = calcValue(now - player.castedAt)
+  return player.team === castTarget.team ? diff : -diff
 }
 
 
@@ -263,11 +311,11 @@ const gameLoop = (t) => {
 
   for (const player of players) {
     const prevision = players.reduce(
-      (total, p) => total + (p.target === player ? getPrevision(p) : 0),
+      (total, p) => total + (p.castTarget === player ? getPrevision(p) : 0),
       0
     )
 
-    player.showPrevision(prevision)
+    player.refresh(prevision)
   }
 
   requestAnimationFrame(gameLoop)
@@ -290,9 +338,6 @@ requestAnimationFrame(gameLoop)
 // - (Buff) Damages
 // - (Action) Attaques
 // - Data (info sur l'adversaire)
-
-
-
 
 </script>
 </body>

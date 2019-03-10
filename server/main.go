@@ -1,27 +1,43 @@
 package main
 
 import (
-	"flag"
-	"log"
-	"net/http"
-	"time"
 	"bytes"
 	"encoding/binary"
+	"flag"
+	"log"
+	"math"
+	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-const START_CAST = 0
-const STOP_CAST = 1
-const KICK = 2
+const GCD = 1000
+const KICK_CD = 4500
+
+const (
+	START_CAST = iota
+	STOP_CAST  = iota
+	KICK       = iota
+)
+
+const (
+	CAST_TARGET = iota
+	CASTED_AT   = iota
+	KICK_TARGET = iota
+	KICKED_AT   = iota
+	HP          = iota
+	ACTION_SIZE = iota
+)
 
 var port = flag.String("port", "8751", "http service port")
 
 var upgrader = websocket.Upgrader{} // use default options
 
-var currentState = [12]float64{}
+var currentState = [4 * ACTION_SIZE]float64{}
 var currentLobby = [4]*websocket.Conn{}
-func broadcast(lobby *[4]*websocket.Conn, state *[12]float64) (err error) {
+
+func broadcast(lobby *[4]*websocket.Conn, state *[4 * ACTION_SIZE]float64) (err error) {
 	wbuf := new(bytes.Buffer)
 	err = binary.Write(wbuf, binary.LittleEndian, state)
 	if err != nil {
@@ -42,8 +58,12 @@ func broadcast(lobby *[4]*websocket.Conn, state *[12]float64) (err error) {
 	return nil
 }
 
-func now() float64 {
-	return float64(time.Now().UnixNano() / int64(time.Millisecond))
+func now() int64 {
+	return time.Now().UnixNano() / int64(time.Millisecond)
+}
+
+func calcValue(diff float64) float64 {
+	return diff * (diff / 10000)
 }
 
 func serveWs(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +83,7 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 
 	if playerCount > 4 {
 		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-		return 
+		return
 	}
 
 	c, err := upgrader.Upgrade(w, r, nil)
@@ -73,7 +93,10 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lobby[index] = c
-	state[index * 3] = -1
+
+	start := index * ACTION_SIZE
+	state[start+CAST_TARGET] = -float64(now())
+	state[start+HP] = 10000
 
 	log.Println("index", index, "playerCount", playerCount)
 
@@ -81,12 +104,12 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		log.Println("Lobby full, preparing next lobby !")
 		// TODO: gerer plusieur lobby ??
 		playerCount = 0
+		gameStarted = true
 		// currentLobby = [4]*websocket.Conn{}
 		// currentState = [12]float64{}
-		gameStarted = true
 	}
 
-	defer func () {
+	defer func() {
 		log.Println(index, "quitting lobby")
 		lobby[index] = nil
 		c.Close()
@@ -98,13 +121,10 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if gameStarted {
-		log.Println("Game started: broadcasting first state")
-		err = broadcast(lobby, state)
-
-		if err != nil {
-			log.Println("write error:", err)
-		}
+	// broadcast lobby update to tell others that we joined in
+	err = broadcast(lobby, state)
+	if err != nil {
+		log.Println("write error:", err)
 	}
 
 	for {
@@ -114,6 +134,8 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		log.Println("got message", message[0], "from player", index)
+
 		if !gameStarted {
 			for _, c := range lobby {
 				if c != nil {
@@ -121,23 +143,67 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			log.Println("Game didnt start yet", message[0], "from player", index)
 			gameStarted = playerCount >= 4
 
 			if !gameStarted {
-				continue	
+				continue
 			}
 		}
 
+		t := float64(now())
+		lastAction := math.Max(state[start+CASTED_AT], state[start+KICKED_AT])
+		canCast := lastAction+GCD < t
 		switch message[0] {
-			case START_CAST:
-				state[index * 3] = float64(message[1])
-				state[index * 3 + 1] = now()
-			case STOP_CAST:
-				state[index * 3] = -1
-			case KICK:
-				// TODO: handle kick
-				// target := message[1]
-				state[index * 3 + 2] = now()
+		case START_CAST:
+			log.Println("Player", index, "try to cast on", message[1])
+			if !canCast {
+				continue
+			}
+			log.Println("Player", index, "cast successfull")
+			state[start+CAST_TARGET] = float64(message[1])
+			state[start+CASTED_AT] = t
+		case STOP_CAST:
+			target := int(state[start+CAST_TARGET])
+
+			if (target < 0) {
+				continue
+			}
+
+			targetStart := target * ACTION_SIZE
+			value := calcValue(t - state[start+CASTED_AT])
+			if (index > 1) == (target > 1) {
+				log.Println("adding ", value, " to ", target)
+				state[targetStart+HP] = math.Min(state[targetStart+HP] + value, 10000)
+			} else {
+				log.Println("removing ", value, " to ", target)
+				state[targetStart+HP] = math.Max(state[targetStart+HP] - value, 0)
+			}
+
+			state[start+CAST_TARGET] = -t
+		case KICK:
+			if !canCast {
+				continue
+			}
+
+			// check if kick is available
+			if state[start+KICKED_AT]+KICK_CD > t {
+				continue
+			}
+
+			state[start+KICKED_AT] = t
+			target := message[1]
+			targetStart := target * ACTION_SIZE
+			if state[targetStart+CAST_TARGET] < 0 {
+				state[start+KICK_TARGET] = -1
+			} else {
+				state[start+KICK_TARGET] = float64(target)
+				// silence target if is casting
+				diff := t - state[targetStart+CASTED_AT]
+				decastTime := t + math.Min(diff, GCD*2)
+				state[targetStart+CASTED_AT] = decastTime
+				state[targetStart+CAST_TARGET] = -decastTime
+			}
 		}
 
 		err = broadcast(lobby, state)
