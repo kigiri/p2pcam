@@ -34,11 +34,11 @@ var port = flag.String("port", "8751", "http service port")
 
 var upgrader = websocket.Upgrader{} // use default options
 
-var currentState = [4 * ACTION_SIZE]float64{}
-var currentLobby = [4]*websocket.Conn{}
+var currentState = &[4 * ACTION_SIZE]float64{}
+var currentLobby = &[4]*websocket.Conn{}
 
 func broadcast(lobby *[4]*websocket.Conn, state *[4 * ACTION_SIZE]float64) (err error) {
-	wbuf := new(bytes.Buffer)
+	wbuf := &bytes.Buffer{}
 	err = binary.Write(wbuf, binary.LittleEndian, state)
 	if err != nil {
 		return err
@@ -67,8 +67,8 @@ func calcValue(diff float64) float64 {
 }
 
 func serveWs(w http.ResponseWriter, r *http.Request) {
-	state := &currentState
-	lobby := &currentLobby
+	state := currentState
+	lobby := currentLobby
 	index := 0
 	gameStarted := false
 	playerCount := 1
@@ -105,8 +105,8 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		// TODO: gerer plusieur lobby ??
 		playerCount = 0
 		gameStarted = true
-		// currentLobby = [4]*websocket.Conn{}
-		// currentState = [12]float64{}
+		currentLobby = &[4]*websocket.Conn{}
+		currentState = &[4 * ACTION_SIZE]float64{}
 	}
 
 	defer func() {
@@ -167,7 +167,7 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		case STOP_CAST:
 			target := int(state[start+CAST_TARGET])
 
-			if (target < 0) {
+			if target < 0 {
 				continue
 			}
 
@@ -175,18 +175,18 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 			value := calcValue(t - state[start+CASTED_AT])
 			if (index > 1) == (target > 1) {
 				log.Println("adding ", value, " to ", target)
-				state[targetStart+HP] = math.Min(state[targetStart+HP] + value, 10000)
+				state[targetStart+HP] = math.Min(state[targetStart+HP]+value, 10000)
 			} else {
 				log.Println("removing ", value, " to ", target)
-				newLife := math.Max(state[targetStart+HP] - value, 0)
+				newLife := math.Max(state[targetStart+HP]-value, 0)
 				state[targetStart+HP] = newLife
 
 				// Handle death, clear casts on target
 				if newLife <= 0 {
 					state[targetStart+CAST_TARGET] = -1
 					for i := 0; i < 4; i++ {
-						if int(state[i * ACTION_SIZE + CAST_TARGET]) == target {
-							state[i * ACTION_SIZE + CAST_TARGET] = -1
+						if int(state[i*ACTION_SIZE+CAST_TARGET]) == target {
+							state[i*ACTION_SIZE+CAST_TARGET] = -1
 						}
 					}
 				}
