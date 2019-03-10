@@ -153,7 +153,8 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 
 		t := float64(now())
 		lastAction := math.Max(state[start+CASTED_AT], state[start+KICKED_AT])
-		canCast := lastAction+GCD < t
+		isDead := state[start+HP] <= 0
+		canCast := !isDead && lastAction+GCD < t
 		switch message[0] {
 		case START_CAST:
 			log.Println("Player", index, "try to cast on", message[1])
@@ -177,7 +178,18 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 				state[targetStart+HP] = math.Min(state[targetStart+HP] + value, 10000)
 			} else {
 				log.Println("removing ", value, " to ", target)
-				state[targetStart+HP] = math.Max(state[targetStart+HP] - value, 0)
+				newLife := math.Max(state[targetStart+HP] - value, 0)
+				state[targetStart+HP] = newLife
+
+				// Handle death, clear casts on target
+				if newLife <= 0 {
+					state[targetStart+CAST_TARGET] = -1
+					for i := 0; i < 4; i++ {
+						if int(state[i * ACTION_SIZE + CAST_TARGET]) == target {
+							state[i * ACTION_SIZE + CAST_TARGET] = -1
+						}
+					}
+				}
 			}
 
 			state[start+CAST_TARGET] = -t

@@ -247,13 +247,9 @@ const players = [...document.getElementsByClassName('player')]
         if (player.hp <= 0) {
           player.isDead = true
           elem.classList.add('dead')
-          elem.removeEventListener('mouseup', handleMouseUp)
-          elem.removeEventListener('mousedown', handleMouseDown)
         } else if (player.isDead) {
           player.isDead = false
           elem.classList.remove('dead')
-          elem.addEventListener('mouseup', handleMouseUp)
-          elem.addEventListener('mousedown', handleMouseDown)
         }
         healthBar.setValue(player.hp / 10000)
         if (!previsionValue) {
@@ -279,10 +275,12 @@ const players = [...document.getElementsByClassName('player')]
     elem.appendChild(prevision)
 
     const handleMouseDown = () => {
+      if (players[position].isDead || player.isDead) return
       sendAction(START_CAST, index)
     }
 
     const handleMouseUp = () => {
+      if (players[position].isDead || player.isDead) return
       sendAction(STOP_CAST)
     }
 
