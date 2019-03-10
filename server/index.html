@@ -247,7 +247,8 @@ const players = [...document.getElementsByClassName('player')]
       castedAt: 0,
       target: undefined,
       refresh: () => {
-        if (!player.isDead && player.hp <= 0) {
+        const shouldDie = player.hp <= 0
+        if (!player.isDead && shouldDie) {
           player.isDead = true
           elem.classList.add('dead')
           healthBar.setValue(0)
@@ -255,7 +256,7 @@ const players = [...document.getElementsByClassName('player')]
           prevision.textContent = ''
           console.log('Player', index, 'is dead')
           return
-        } else if (player.isDead) {
+        } else if (player.isDead && !shouldDie) {
           player.isDead = false
           elem.classList.remove('dead')
           console.log('Player', index, 'is alive')
