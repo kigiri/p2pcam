@@ -66,7 +66,7 @@ func calcValue(diff float64) float64 {
 	return diff * (diff / 10000)
 }
 
-func serveWs(w http.ResponseWriter, r *http.Request) {
+func joinGame(c *websocket.Conn) (err error) {
 	state := currentState
 	lobby := currentLobby
 	index := 0
@@ -81,57 +81,42 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if playerCount > 4 {
-		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-		return
-	}
-
-	c, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Print("upgrade:", err)
-		return
-	}
-
 	lobby[index] = c
 
 	start := index * ACTION_SIZE
 	state[start+CAST_TARGET] = -float64(now())
 	state[start+HP] = 10000
 
-	log.Println("index", index, "playerCount", playerCount)
+	defer func() {
+		log.Println(index, "quitting lobby")
+		lobby[index] = nil
+		state[start+CAST_TARGET] = -float64(now())
+		state[start+HP] = 0
+	}()
 
 	if playerCount >= 4 {
 		log.Println("Lobby full, preparing next lobby !")
-		// TODO: gerer plusieur lobby ??
 		playerCount = 0
 		gameStarted = true
 		currentLobby = &[4]*websocket.Conn{}
 		currentState = &[4 * ACTION_SIZE]float64{}
 	}
 
-	defer func() {
-		log.Println(index, "quitting lobby")
-		lobby[index] = nil
-		c.Close()
-	}()
-
 	err = c.WriteMessage(websocket.BinaryMessage, []byte{byte(index)})
 	if err != nil {
-		log.Println("Unable to send player position:", err)
-		return
+		return err
 	}
 
 	// broadcast lobby update to tell others that we joined in
 	err = broadcast(lobby, state)
 	if err != nil {
-		log.Println("write error:", err)
+		return err
 	}
 
 	for {
 		_, message, err := c.ReadMessage()
 		if err != nil {
-			log.Println("read error:", err)
-			return
+			return err
 		}
 
 		log.Println("got message", message[0], "from player", index)
@@ -157,11 +142,10 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 		canCast := !isDead && lastAction+GCD < t
 		switch message[0] {
 		case START_CAST:
-			log.Println("Player", index, "try to cast on", message[1])
 			if !canCast {
 				continue
 			}
-			log.Println("Player", index, "cast successfull")
+
 			state[start+CAST_TARGET] = float64(message[1])
 			state[start+CASTED_AT] = t
 		case STOP_CAST:
@@ -174,10 +158,8 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 			targetStart := target * ACTION_SIZE
 			value := calcValue(t - state[start+CASTED_AT])
 			if (index > 1) == (target > 1) {
-				log.Println("adding ", value, " to ", target)
 				state[targetStart+HP] = math.Min(state[targetStart+HP]+value, 10000)
 			} else {
-				log.Println("removing ", value, " to ", target)
 				newLife := math.Max(state[targetStart+HP]-value, 0)
 				state[targetStart+HP] = newLife
 
@@ -220,10 +202,21 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 
 		err = broadcast(lobby, state)
 		if err != nil {
-			log.Println("write error:", err)
-			return
+			return err
 		}
 	}
+}
+
+func serveWs(w http.ResponseWriter, r *http.Request) {
+	c, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Print("error upgrading:", err)
+		return
+	}
+
+	joinGame(c)
+
+	defer c.Close()
 }
 
 func serveHome(w http.ResponseWriter, r *http.Request) {
