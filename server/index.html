@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Fakecaster 3</title>
+  <meta charset="utf-8">
+<style>
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: black;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+#board {
+  height: 100vw;
+  width: 100vw;
+  background: #222;
+}
+
+.player {
+  width: 50%;
+  height: 100%;
+  padding: 1%;
+  display: flex;
+  flex-direction: column;
+}
+
+#board .side {
+  width: 100%;
+  height: 50%;
+  display: flex;
+}
+
+.heal, .damage {
+  font-size: 5vw;
+  font-family: monospace;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-grow: 1;
+  user-select: none;
+  -moz-user-select: none;
+}
+
+@media (orientation:landscape) {
+  #board {
+    height: 100vh;
+    width: 100vh;
+  }
+  .heal, .damage {
+    font-size: 5vh;
+  }
+}
+
+.kick {
+  height: 56px;
+  width: 56px;
+  background-image: url(https://wow.zamimg.com/images/wow/icons/large/spell_frost_iceshock.jpg);
+}
+
+.ui {
+  display: flex;
+  width: 100%;
+}
+
+.bars {
+  width: calc(100% - 56px);
+}
+
+.bar {
+  width: 100%;
+  height: 28px;
+  overflow: hidden;
+}
+
+.bar-state {
+  width: 100%;
+  height: 100%;
+}
+
+.health-bar .bar-state {
+  background-color: #f33;
+}
+
+.energy-bar .bar-state {
+  background-color: #08f;
+}
+
+
+.heal {
+  color: #9f3;
+}
+
+.damage {
+  color: red;
+}
+
+</style>
+</head>
+<body>
+<div id="board">
+  <div id="ally-side" class="side">
+    <div id="ally-1" class="player"></div>
+    <div id="ally-2" class="player"></div>
+  </div>
+  <div id="enemy-side" class="side">
+    <div id="enemy-1" class="player"></div>
+    <div id="enemy-2" class="player"></div>
+  </div>
+</div>
+
+<script type="module">
+const START_CAST = 0
+const STOP_CAST = 1
+const KICK = 2
+
+const ws = new WebSocket(`ws://${document.location.host}/ws`)
+
+ws.binaryType = 'arraybuffer'
+
+let gameStarted = false
+const updateGameState = e => {
+  if (!gameStarted) {
+    gameStarted = true
+    console.log('game started !!')
+  }
+  const state = new Float64Array(e.data)
+
+  let i = -1
+  while (++i < 4) {
+    const start = i * 3
+    players[i].target = players[state[start]]
+    players[i].targetedAt = state[start + 1]
+    players[i].kickUsedAt = state[start + 2]
+  }
+}
+
+let position
+const getInitialPosition = e => {
+  position = new Uint8Array(e.data)[0]
+  console.log({ position })
+  ws.addEventListener('message', updateGameState)
+  ws.removeEventListener('message', getInitialPosition)
+}
+
+ws.addEventListener('message', getInitialPosition)
+
+const sendAction = (...args) => 
+  gameStarted && ws.send(new Uint8Array(args))
+
+const makeBar = ({ name, hueStart, hueEnd }) => {
+  const hueDiff = hueEnd - hueStart
+  let value = 1
+  const elem = document.createElement('div')
+  const stateElem = document.createElement('div')
+
+  elem.className = `bar ${name}-bar`
+  stateElem.className = 'bar-state'
+
+  elem.appendChild(stateElem)
+
+  const getValue = () => value
+  const setValue = newValue => {
+    value = Math.min(Math.max(newValue, 0), 1)
+    const h = hueDiff * value + hueStart
+    stateElem.style.transform = `translate(-${((1-value)*100).toFixed(3)}%)`
+    stateElem.style.backgroundColor = `hsl(${h}, 100%, 60%)`
+    elem.style.backgroundColor = `hsl(${h}, 100%, 10%)`
+  }
+
+  setValue(0.5)
+  return { elem, stateElem, setValue, getValue }
+}
+
+
+const maxDamage = 20000
+const players = [...document.getElementsByClassName('player')]
+  .map((elem, index) => {
+    const kick = document.createElement('div')
+    const bars = document.createElement('div')
+    const ui = document.createElement('div')
+    const prevision = document.createElement('div')
+    const energyBar = makeBar({ name: 'energy', hueStart: 220, hueEnd: 300 })
+    const healthBar = makeBar({ name: 'health', hueStart: 0, hueEnd: 90 })
+    const player = {
+      team: index > 1 ? 'enemy' : 'ally',
+      kickUsedAt: 0,
+      targetedAt: 0,
+      target: undefined,
+      showPrevision: value => {
+        if (!value) {
+          prevision.textContent = ''
+          return
+        }
+        prevision.textContent = String(Math.floor(value / 100))
+        prevision.className = (value > 0) ? 'heal' : 'damage'
+      },
+      index,
+      elem,
+    }
+
+    player.showPrevision(1000)
+
+    kick.className = 'kick'
+    bars.className = 'bars'
+    ui.className = 'ui'
+
+    bars.appendChild(energyBar.elem)
+    bars.appendChild(healthBar.elem)
+    ui.appendChild(kick)
+    ui.appendChild(bars)
+    elem.appendChild(ui)
+    elem.appendChild(prevision)
+
+    elem.addEventListener('mousedown', () => {
+      // players[position].target = player
+      // players[position].targetedAt = now
+
+      sendAction(START_CAST, index)
+    })
+
+    elem.addEventListener('mouseup', () => {
+      // const prevision = getPrevision(players[position])
+      // const changes = prevision / maxDamage
+      // const current = healthBar.getValue()
+      // healthBar.setValue(current + changes)
+      // players[position].target = undefined
+
+      sendAction(STOP_CAST)
+    })
+
+    return player
+  })
+
+
+const getPrevision = player => {
+  const { target } = player
+  if (!target) return 0
+  const diff = now - player.targetedAt
+  return player.team === target.team ? diff : -diff
+}
+
+
+let now = Date.now()
+let prevT = 0
+const gameLoop = (t) => {
+  now = Date.now()
+  const delta = t - prevT
+  prevT = t
+
+  for (const player of players) {
+    const prevision = players.reduce(
+      (total, p) => total + (p.target === player ? getPrevision(p) : 0),
+      0
+    )
+
+    player.showPrevision(prevision)
+  }
+
+  requestAnimationFrame(gameLoop)
+}
+
+requestAnimationFrame(gameLoop)
+// 2v2
+// Counter -
+// Sort - self
+// Sort - friend
+// Sort - enemy1
+// Sort - enemy2
+
+
+// Choisis des ressources
+
+// types de ressources:
+// - (Buff) Resistance
+// - (Action) Heal
+// - (Buff) Damages
+// - (Action) Attaques
+// - Data (info sur l'adversaire)
+
+
+
+
+</script>
+</body>
+</html>
