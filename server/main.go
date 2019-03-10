@@ -24,8 +24,8 @@ const (
 const (
 	CAST_TARGET = iota
 	CASTED_AT   = iota
-	KICK_TARGET = iota
 	KICKED_AT   = iota
+	SILENCED_AT = iota
 	HP          = iota
 	ACTION_SIZE = iota
 )
@@ -188,15 +188,13 @@ func joinGame(c *websocket.Conn) (err error) {
 			state[start+KICKED_AT] = t
 			target := message[1]
 			targetStart := target * ACTION_SIZE
-			if state[targetStart+CAST_TARGET] < 0 {
-				state[start+KICK_TARGET] = -1
-			} else {
-				state[start+KICK_TARGET] = float64(target)
+			if state[targetStart+CAST_TARGET] >= 0 {
 				// silence target if is casting
 				diff := t - state[targetStart+CASTED_AT]
-				decastTime := t + math.Min(diff, GCD*2)
+				decastTime := t + math.Max(diff, GCD*2)
 				state[targetStart+CASTED_AT] = decastTime
 				state[targetStart+CAST_TARGET] = -decastTime
+				state[targetStart+SILENCED_AT] = t
 			}
 		}
 

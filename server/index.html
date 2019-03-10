@@ -35,6 +35,7 @@ body {
   padding: 1%;
   display: flex;
   flex-direction: column;
+  border: 2px solid transparent;
 }
 
 #board .side {
@@ -69,6 +70,17 @@ body {
   height: 56px;
   width: 56px;
   background-image: url(https://wow.zamimg.com/images/wow/icons/large/spell_frost_iceshock.jpg);
+  display: flex;
+  font-size: 48px;
+  font-family: monospace;
+  color: yellow;
+  text-shadow:
+     2px  2px 4px black,
+    -2px  2px 4px black,
+     2px -2px 4px black,
+    -2px -2px 4px black;
+  justify-content: center;
+  align-items: center;
 }
 
 .ui {
@@ -115,6 +127,10 @@ body {
   opacity: 0.3;
 }
 
+.player.casting {
+  border: 2px solid yellow;
+}
+
 </style>
 </head>
 <body>
@@ -133,6 +149,7 @@ body {
 // Class ideas:
 // successfull kick = heal back
 //
+
 let now = Date.now()
 
 const GCD = 1000
@@ -144,8 +161,8 @@ const KICK = 2
 
 const CAST_TARGET = 0
 const CASTED_AT = 1
-const KICK_TARGET = 2
-const KICKED_AT = 3
+const KICKED_AT = 2
+const SILENCED_AT = 3
 const HP = 4
 const ACTION_SIZE = 5
 
@@ -160,6 +177,12 @@ ws.addEventListener('message', e => {
     position = new Uint8Array(e.data)[0]
     const myPlayer = players[position]
     myPlayer.elem.classList.add('me')
+
+    for (const p of players) {
+      p.isAlly = p.team === myPlayer.team
+      p.isEnemy = !p.isAlly
+    }
+
     return
   }
 
@@ -177,10 +200,10 @@ ws.addEventListener('message', e => {
       player.castTarget = players[castTarget]
     }
 
-    player.kickTarget = state[start + KICK_TARGET]
+    player.hp = state[start + HP]
     player.kickedAt = state[start + KICKED_AT]
     player.castedAt = state[start + CASTED_AT]
-    player.hp = state[start + HP]
+    player.silencedAt = state[start + SILENCED_AT]
   }
 
   if (!gameStarted) {
@@ -192,7 +215,6 @@ ws.addEventListener('message', e => {
     }
   }
 })
-
 
 ws.addEventListener('close', () => {
   console.log('socket close !')
@@ -245,7 +267,7 @@ const players = [...document.getElementsByClassName('player')]
       team: index > 1 ? 'enemy' : 'ally',
       kickedAt: 0,
       castedAt: 0,
-      target: undefined,
+      castTarget: undefined,
       refresh: () => {
         const shouldDie = player.hp <= 0
         if (!player.isDead && shouldDie) {
@@ -262,14 +284,41 @@ const players = [...document.getElementsByClassName('player')]
           console.log('Player', index, 'is alive')
         }
 
+        if (player.isEnemy) {
+          if (player.castTarget === undefined) {
+            elem.classList.remove('casting')
+          } else {
+            elem.classList.add('casting')
+          }
+        }
+
         // Set HP
         healthBar.setValue(player.hp / 10000)
 
         // Set Energy
-        const lastAction = Math.max(player.kickedAt, player.castedAt)
-        const rab = Math.max((lastAction + GCD) - now, 0)
- 
-        energyBar.setValue(rab / GCD)
+        if (player.castedAt > now) {
+          // Kicked !
+          const silenceDuration = player.castedAt - player.silencedAt
+          const silenceLeft = player.castedAt - now
+          energyBar.setValue(silenceLeft / silenceDuration)
+
+        } else {
+          // Normal GCD
+          const lastAction = Math.max(player.kickedAt, player.castedAt)
+          const energyCd = Math.max((lastAction + GCD) - now, 0)
+   
+          energyBar.setValue(energyCd / GCD)
+        }
+
+
+        // Set Kick Cooldown Text
+        const kickCd = Math.max(player.kickedAt + KICK_CD - now, 0)
+
+        if (kickCd) {
+          kick.textContent = Math.round(kickCd / 1000)
+        } else {
+          kick.textContent = ''
+        }
 
         // Calc predictive text
         const previsionValue = players
@@ -301,9 +350,10 @@ const players = [...document.getElementsByClassName('player')]
     elem.appendChild(ui)
     elem.appendChild(prevision)
 
-    const handleMouseDown = () => {
+    const handleMouseDown = e => {
+      e.preventDefault()
       if (players[position].isDead || player.isDead) return
-      sendAction(START_CAST, index)
+      sendAction(e.button ? KICK : START_CAST, index)
     }
 
     const handleMouseUp = () => {
@@ -311,6 +361,7 @@ const players = [...document.getElementsByClassName('player')]
       sendAction(STOP_CAST)
     }
 
+    elem.addEventListener('contextmenu', e => e.preventDefault())
     elem.addEventListener('mouseup', handleMouseUp)
     elem.addEventListener('mousedown', handleMouseDown)
 
