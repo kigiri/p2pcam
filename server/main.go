@@ -183,10 +183,10 @@ func serveWs(w http.ResponseWriter, r *http.Request) {
 
 				// Handle death, clear casts on target
 				if newLife <= 0 {
-					state[targetStart+CAST_TARGET] = -1
+					state[targetStart+CAST_TARGET] = -t
 					for i := 0; i < 4; i++ {
 						if int(state[i*ACTION_SIZE+CAST_TARGET]) == target {
-							state[i*ACTION_SIZE+CAST_TARGET] = -1
+							state[i*ACTION_SIZE+CAST_TARGET] = -t
 						}
 					}
 				}

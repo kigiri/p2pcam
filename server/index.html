@@ -133,8 +133,10 @@ body {
 // Class ideas:
 // successfull kick = heal back
 //
+let now = Date.now()
 
 const GCD = 1000
+const KICK_CD = 4500
 
 const START_CAST = 0
 const STOP_CAST = 1
@@ -228,6 +230,7 @@ const makeBar = ({ name, hueStart, hueEnd }) => {
 
 
 const calcValue = diff => diff * (diff / 10000)
+const notDead = player => !player.isDead
 const players = [...document.getElementsByClassName('player')]
   .map((elem, index) => {
     const ui = document.createElement('div')
@@ -240,18 +243,41 @@ const players = [...document.getElementsByClassName('player')]
       isDead: true,
       hp: 100000,
       team: index > 1 ? 'enemy' : 'ally',
-      kickUsedAt: 0,
+      kickedAt: 0,
       castedAt: 0,
       target: undefined,
-      refresh: previsionValue => {
-        if (player.hp <= 0) {
+      refresh: () => {
+        if (!player.isDead && player.hp <= 0) {
           player.isDead = true
           elem.classList.add('dead')
+          healthBar.setValue(0)
+          energyBar.setValue(0)
+          prevision.textContent = ''
+          console.log('Player', index, 'is dead')
+          return
         } else if (player.isDead) {
           player.isDead = false
           elem.classList.remove('dead')
+          console.log('Player', index, 'is alive')
         }
+
+        // Set HP
         healthBar.setValue(player.hp / 10000)
+
+        // Set Energy
+        const lastAction = Math.max(player.kickedAt, player.castedAt)
+        const rab = Math.max((lastAction + GCD) - now, 0)
+ 
+        energyBar.setValue(rab / GCD)
+
+        // Calc predictive text
+        const previsionValue = players
+          .filter(notDead)
+          .reduce(
+            (t, p) => t + (p.castTarget === player ? getPrevision(p) : 0),
+            0
+          )
+
         if (!previsionValue) {
           prevision.textContent = ''
           return
@@ -300,7 +326,6 @@ const getPrevision = player => {
 }
 
 
-let now = Date.now()
 let prevT = 0
 const gameLoop = (t) => {
   now = Date.now()
@@ -308,12 +333,7 @@ const gameLoop = (t) => {
   prevT = t
 
   for (const player of players) {
-    const prevision = players.reduce(
-      (total, p) => total + (p.castTarget === player ? getPrevision(p) : 0),
-      0
-    )
-
-    player.refresh(prevision)
+    player.refresh()
   }
 
   requestAnimationFrame(gameLoop)
