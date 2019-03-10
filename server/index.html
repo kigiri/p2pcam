@@ -294,7 +294,7 @@ window.players = players
 
 const getPrevision = player => {
   const { castTarget } = player
-  if (!castTarget) return 0
+  if (!castTarget || castTarget.isDead) return 0
   const diff = calcValue(now - player.castedAt)
   return player.team === castTarget.team ? diff : -diff
 }
